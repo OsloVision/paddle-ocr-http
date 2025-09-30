@@ -82,33 +82,6 @@ def test_ocr_file_upload(base_url, image_path):
         print(f"❌ File upload OCR test failed: {str(e)}")
         return False
 
-def test_ocr_base64(base_url, image_path):
-    """Test OCR with base64 JSON"""
-    print("\n🔍 Testing OCR with base64 JSON...")
-    try:
-        # Convert image file to base64
-        with open(image_path, 'rb') as f:
-            img_base64 = base64.b64encode(f.read()).decode('utf-8')
-        
-        payload = {'image': img_base64}
-        headers = {'Content-Type': 'application/json'}
-        response = requests.post(f"{base_url}/ocr", json=payload, headers=headers, timeout=30)
-        
-        if response.status_code == 200:
-            result = response.json()
-            print("✅ Base64 JSON OCR test passed")
-            print(f"   Extracted text: '{result.get('full_text', '')}'")
-            print(f"   Confidence: {result.get('detailed_results', [{}])[0].get('confidence', 0) if result.get('detailed_results') else 'N/A'}")
-            return True
-        else:
-            print(f"❌ Base64 JSON OCR test failed with status {response.status_code}")
-            print(f"   Response: {response.text}")
-            return False
-    except Exception as e:
-        print(f"❌ Base64 JSON OCR test failed: {str(e)}")
-        return False
-
-
 
 def main():
     """Main test function"""
@@ -141,9 +114,6 @@ def main():
         tests_passed += 1
     
     if test_ocr_file_upload(base_url, image_path):
-        tests_passed += 1
-    
-    if test_ocr_base64(base_url, image_path):
         tests_passed += 1
     
     # Summary

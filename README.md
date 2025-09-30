@@ -1,12 +1,13 @@
 # PaddleOCR HTTP API
 
-A simple Flask API for text extraction from images using PaddleOCR 3.2 with PP-OCRv5, optimized for number plate recognition.
+A FastAPI service for text extraction from images using PaddleOCR 3.2 with PP-OCRv5, optimized for number plate recognition.
 
 ## Features
 
-- REST API for OCR text extraction
+- Fast REST API for OCR text extraction built with FastAPI
+- Automatic interactive API documentation (Swagger UI)
 - Supports multiple image formats (PNG, JPG, JPEG, BMP, TIFF, WEBP)
-- Accepts both file uploads and base64 encoded images
+- File upload via multipart/form-data
 - Optimized for small images (~20KB number plates)
 - Returns text with confidence scores and bounding boxes
 - Docker containerized for easy deployment
@@ -32,6 +33,10 @@ docker run -p 5000:5000 paddle-ocr-api
 
 The API will be available at `http://localhost:5000`
 
+**Interactive API Documentation** available at:
+- Swagger UI: `http://localhost:5000/docs`
+- ReDoc: `http://localhost:5000/redoc`
+
 ## API Endpoints
 
 ### Health Check
@@ -52,35 +57,19 @@ POST /ocr
 curl -X POST -F "image=@numberplate.jpg" http://localhost:5000/ocr
 ```
 
-### 2. Send base64 encoded image (JSON)
-
-```bash
-curl -X POST \
-  -H "Content-Type: application/json" \
-  -d '{"image": "base64_encoded_image_data_here"}' \
-  http://localhost:5000/ocr
-```
-
-### 3. Python example
+### 2. Python example
 
 ```python
 import requests
-import base64
 
-# Method 1: File upload
+# File upload
 with open('numberplate.jpg', 'rb') as f:
-    files = {'image': f}
+    files = {'image': ('numberplate.jpg', f, 'image/jpeg')}
     response = requests.post('http://localhost:5000/ocr', files=files)
     result = response.json()
 
-# Method 2: Base64 JSON
-with open('numberplate.jpg', 'rb') as f:
-    image_data = base64.b64encode(f.read()).decode('utf-8')
-    payload = {'image': image_data}
-    response = requests.post('http://localhost:5000/ocr', json=payload)
-    result = response.json()
-
-print(f"Extracted text: {result['full_text']}")
+print(f"Extracted text: {result['text']}")
+print(f"Confidence: {result['confidence']}")
 ```
 
 ## Response Format
@@ -88,20 +77,15 @@ print(f"Extracted text: {result['full_text']}")
 ```json
 {
   "success": true,
-  "full_text": "ABC123",
-  "detailed_results": [
+  "text": "ABC123",
+  "confidence": 0.95,
+  "details": [
     {
       "text": "ABC123",
       "confidence": 0.95,
       "bbox": [[x1, y1], [x2, y2], [x3, y3], [x4, y4]]
     }
-  ],
-  "text_count": 1,
-  "image_info": {
-    "width": 640,
-    "height": 480,
-    "mode": "RGB"
-  }
+  ]
 }
 ```
 
@@ -119,11 +103,16 @@ pip install -r requirements.txt
 python app.py
 ```
 
+Or use uvicorn directly:
+
+```bash
+uvicorn app:app --host 0.0.0.0 --port 5000 --reload
+```
+
 ### Environment Variables
 
 - `HOST`: Server host (default: 0.0.0.0)
-- `PORT`: Server port (default: 5000)  
-- `DEBUG`: Enable debug mode (default: False)
+- `PORT`: Server port (default: 5000)
 
 ## Configuration
 
@@ -138,17 +127,16 @@ The API is pre-configured for optimal number plate recognition:
 
 ## Docker Image Size Optimization
 
-The Dockerfile uses `python:3.9-slim` base image and includes only necessary system dependencies to keep the image size reasonable while supporting OpenCV and PaddleOCR requirements.
+The Dockerfile uses PaddlePaddle official GPU image as base and includes only necessary dependencies to support OpenCV and PaddleOCR requirements.
 
 ## Error Handling
 
 The API includes comprehensive error handling for:
 
-- Invalid file formats
-- Corrupted images
-- Missing image data
-- File size limits
-- OCR processing errors
+- Invalid file formats (returns 400)
+- File size limits (returns 413)
+- OCR processing errors (returns 500)
+- Missing image data (returns 400)
 
 ## Performance Notes
 
@@ -156,3 +144,4 @@ The API includes comprehensive error handling for:
 - First OCR request may be slower due to model loading
 - Subsequent requests are faster due to model caching
 - Consider using GPU version for high-throughput scenarios
+- Async endpoints for better concurrency

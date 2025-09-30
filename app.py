@@ -1,239 +1,210 @@
 #!/usr/bin/env python3
 """
-Flask API for PaddleOCR text extraction from images.
+FastAPI for PaddleOCR text extraction from images.
 Uses PaddleOCR 3.2 for enhanced accuracy.
 Optimized for number plate recognition on small 20KB images.
 """
 
 import os
-import io
-import base64
-import json
 import tempfile
-from flask import Flask, request, jsonify
-from PIL import Image
-import numpy as np
-from paddleocr import PaddleOCR
+from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.responses import JSONResponse
 import logging
+from logging.config import dictConfig
+import uvicorn
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Set up initial logging configuration
+log_config = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "default": {
+            "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        },
+    },
+    "handlers": {
+        "default": {
+            "formatter": "default",
+            "class": "logging.StreamHandler",
+            "stream": "ext://sys.stdout",
+        },
+    },
+    "root": {
+        "handlers": ["default"],
+        "level": "INFO",
+    },
+}
+
+dictConfig(log_config)
 logger = logging.getLogger(__name__)
 
-# Initialize Flask app
-app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # 5MB max file size
+# Initialize FastAPI app
+app = FastAPI()
 
 # Initialize PaddleOCR 3.2 with simplified configuration
 logger.info("Initializing PaddleOCR 3.2")
 
+from paddleocr import PaddleOCR
+import traceback
+
 ocr = PaddleOCR(
-    use_doc_orientation_classify=False,
-    use_doc_unwarping=False,
-    use_textline_orientation=False
+    # text_recognition_model_name="PP-OCRv5_mobile_rec",
+    use_textline_orientation=True,
+    text_detection_model_name="PP-OCRv5_server_det",
+    text_recognition_model_name="PP-OCRv5_server_rec"
 )
 
+# CRITICAL: Reconfigure logging AFTER PaddleOCR initialization
+# PaddleOCR hijacks the logging configuration, so we need to restore it
+dictConfig(log_config)
+logger = logging.getLogger(__name__)
 
+logger.info("PaddleOCR initialization complete, logging reconfigured")
 
-def process_image(image_data):
+def process_image(image_path):
     """
-    Process image data and return OCR results using PaddleOCR 3.2
+    Process image file and return OCR results using PaddleOCR
+    
+    Args:
+        image_path: Path to the image file
     """
     try:
-        # Save image to temporary file for PaddleOCR 3.2 predict method
-        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
-            # Save PIL image to temporary file
-            image_data.save(tmp_file.name, format='JPEG')
-            
-            # Run OCR using predict method
-            result = ocr.predict(input=tmp_file.name)
-            
-            # Clean up temporary file
-            os.unlink(tmp_file.name)
+        # Run OCR using the file path with ocr.predict()
+        logger.info(f"Running OCR on image: {image_path}")
+        result = ocr.predict(image_path)
+
+        logger.info(f"OCR result type: {type(result)}, length: {len(result) if result else 0}")
         
         # Process results
-        if not result:
+        if not result or len(result) == 0:
             return {
                 'success': True,
                 'text': '',
                 'confidence': 0.0,
+                'rec_texts': [],
+                'rec_scores': [],
                 'details': []
             }
+
+        # result is a list of dictionaries
+        # Each dict contains rec_texts, rec_scores, rec_polys, etc.
+        all_texts = []
+        all_scores = []
+        all_details = []
         
-        # Extract text and confidence from PaddleOCR 3.2 results
-        texts = []
-        confidences = []
-        details = []
-        
-        # Process the result from PaddleOCR 3.2
-        for res in result:
-            # PaddleOCR 3.2 result structure
-            if hasattr(res, 'texts') and res.texts:
-                for text_info in res.texts:
-                    text = text_info.get('text', '')
-                    confidence = text_info.get('score', 0.0)
-                    bbox = text_info.get('bbox', [])
-                    
-                    if text.strip():  # Only add non-empty text
-                        texts.append(text)
-                        confidences.append(confidence)
-                        details.append({
-                            'text': text,
-                            'confidence': confidence,
-                            'bbox': bbox
-                        })
+        for page_result in result:
+            rec_texts = page_result.get('rec_texts', [])
+            rec_scores = page_result.get('rec_scores', [])
+            rec_polys = page_result.get('rec_polys', [])
+            
+            # Add to aggregated lists
+            all_texts.extend(rec_texts)
+            all_scores.extend(rec_scores)
+            
+            # Build detailed results with bboxes
+            for i, (text, score) in enumerate(zip(rec_texts, rec_scores)):
+                bbox = rec_polys[i].tolist() if i < len(rec_polys) else []
+                all_details.append({
+                    'text': text,
+                    'confidence': float(score),
+                    'bbox': bbox
+                })
         
         # Combine all text
-        full_text = ' '.join(texts)
-        avg_confidence = sum(confidences) / len(confidences) if confidences else 0.0
+        full_text = ' '.join(all_texts)
+        avg_confidence = sum(all_scores) / len(all_scores) if all_scores else 0.0
         
         return {
             'success': True,
             'text': full_text,
-            'confidence': avg_confidence,
-            'details': details
+            'confidence': float(avg_confidence),
+            'rec_texts': all_texts,
+            'rec_scores': [float(score) for score in all_scores],
+            'details': all_details
         }
         
     except Exception as e:
         logger.error(f"OCR processing error: {str(e)}")
+        stack_trace = traceback.format_exc()
+        logger.error(stack_trace)
         return {
             'success': False,
             'error': str(e)
         }
 
-@app.route('/health', methods=['GET'])
-def health_check():
+@app.get('/health')
+async def health_check():
     """Health check endpoint"""
-    return jsonify({
+    return {
         'status': 'healthy',
         'service': 'paddle-ocr-api',
         'version': '1.0.0',
         'paddleocr_version': '3.2',
         'gpu_enabled': False
-    })
+    }
 
-@app.route('/ocr', methods=['POST'])
-def extract_text():
+@app.post('/ocr')
+async def extract_text(image: UploadFile = File(...)):
     """
     Extract text from uploaded image using PaddleOCR
     
-    Accepts:
-    - File upload (multipart/form-data) with key 'image'
-    - JSON with base64 encoded image in 'image' field
+    Args:
+        image: Uploaded image file (PNG, JPG, JPEG, BMP, TIFF, or WEBP)
     
     Returns:
-    JSON response with extracted text and metadata
+        JSON response with extracted text and metadata
     """
+    temp_file_path = None
+    logger.info("Received OCR request")
+    
     try:
-        image = None
+        # Validate file type
+        if not image.filename:
+            raise HTTPException(status_code=400, detail="No file selected")
         
-        # Handle file upload
-        if 'image' in request.files:
-            file = request.files['image']
-            if file.filename == '':
-                return jsonify({
-                    'success': False,
-                    'error': 'No file selected'
-                }), 400
-            
-            # Validate file type
-            if not file.filename.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.webp')):
-                return jsonify({
-                    'success': False,
-                    'error': 'Unsupported file type. Use PNG, JPG, JPEG, BMP, TIFF, or WEBP'
-                }), 400
-            
-            try:
-                image = Image.open(file.stream)
-            except Exception as e:
-                return jsonify({
-                    'success': False,
-                    'error': f'Invalid image file: {str(e)}'
-                }), 400
+        if not image.filename.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.webp')):
+            raise HTTPException(
+                status_code=400,
+                detail='Unsupported file type. Use PNG, JPG, JPEG, BMP, TIFF, or WEBP'
+            )
         
-        # Handle JSON with base64 image
-        elif request.is_json:
-            data = request.get_json()
-            if not data or 'image' not in data:
-                return jsonify({
-                    'success': False,
-                    'error': 'Missing image data in JSON request'
-                }), 400
-            
-            try:
-                # Decode base64 image
-                image_data = base64.b64decode(data['image'])
-                image = Image.open(io.BytesIO(image_data))
-            except Exception as e:
-                return jsonify({
-                    'success': False,
-                    'error': f'Invalid base64 image data: {str(e)}'
-                }), 400
+        # Check file size (5MB limit)
+        contents = await image.read()
+        if len(contents) > 20 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="File too large. Maximum size is 20MB.")
         
-        else:
-            return jsonify({
-                'success': False,
-                'error': 'No image provided. Send as file upload or base64 JSON.'
-            }), 400
+        # Save uploaded file to temporary file with correct extension
+        _, ext = os.path.splitext(image.filename)
+        ext = ext.lower() if ext else '.jpg'
         
-        # Convert to RGB if necessary (remove alpha channel, handle grayscale)
-        if image.mode in ('RGBA', 'LA'):
-            background = Image.new('RGB', image.size, (255, 255, 255))
-            if image.mode == 'RGBA':
-                background.paste(image, mask=image.split()[-1])
-            else:
-                background.paste(image, mask=image.split()[-1])
-            image = background
-        elif image.mode != 'RGB':
-            image = image.convert('RGB')
+        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp_file:
+            tmp_file.write(contents)
+            temp_file_path = tmp_file.name
         
         # Log image info
-        logger.info(f"Processing image: {image.size[0]}x{image.size[1]} pixels, mode: {image.mode}")
+        logger.info(f"Processing image: {temp_file_path}")
         
         # Process with OCR
-        result = process_image(image)
+        result = process_image(temp_file_path)
         
-        # Add metadata
-        result['image_info'] = {
-            'width': image.size[0],
-            'height': image.size[1],
-            'mode': image.mode
-        }
-        
-        return jsonify(result)
+        return result
     
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': f'Server error: {str(e)}',
-            'full_text': '',
-            'detailed_results': [],
-            'text_count': 0
-        }), 500
+        raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
+    finally:
+        # Clean up temporary file
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.unlink(temp_file_path)
 
 
 
-@app.errorhandler(413)
-def too_large(e):
-    """Handle file too large error"""
-    return jsonify({
-        'success': False,
-        'error': 'File too large. Maximum size is 5MB.'
-    }), 413
 
-@app.errorhandler(404)
-def not_found(e):
-    """Handle 404 errors"""
-    return jsonify({
-        'success': False,
-        'error': 'Endpoint not found. Use POST /ocr to extract text from images.'
-    }), 404
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    host = os.environ.get('HOST', '0.0.0.0')
-    debug = os.environ.get('DEBUG', 'False').lower() == 'true'
-    
+    host = "0.0.0.0"
+    port = 5000
     logger.info(f"Starting PaddleOCR API server on {host}:{port}")
-    app.run(host=host, port=port, debug=debug)
+    uvicorn.run(app, host=host, port=port)
