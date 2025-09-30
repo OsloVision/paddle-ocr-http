@@ -2,6 +2,8 @@
 
 A FastAPI service for text extraction from images using PaddleOCR 3.2 with PP-OCRv5 server models, optimized for number plate recognition.
 
+This operates currently only in CPU mode, but can be configured for GPU use, please submit a PR if you need this.
+
 ## Features
 
 - Fast REST API for OCR text extraction built with FastAPI
@@ -23,10 +25,8 @@ A FastAPI service for text extraction from images using PaddleOCR 3.2 with PP-OC
 docker compose up --build
 ```
 
-The service includes GPU support configuration in `docker-compose.yml`. To use GPU acceleration, ensure you have:
-- NVIDIA GPU with CUDA support
-- NVIDIA Docker runtime installed
-- Uncomment GPU base image in `Dockerfile`
+
+
 
 ### Or build and run with Docker directly
 
@@ -148,7 +148,7 @@ The API is pre-configured for optimal text recognition:
 - **Recognition Model**: PP-OCRv5_server_rec (high accuracy recognition)
 - **Textline Orientation**: Enabled for rotated text detection
 - **Language**: English (default)
-- **Processing Mode**: CPU-only by default (GPU support configurable)
+- **Processing Mode**: CPU-only
 - **Maximum File Size**: 20MB
 - **Supported Formats**: PNG, JPG, JPEG, BMP, TIFF, WEBP
 
