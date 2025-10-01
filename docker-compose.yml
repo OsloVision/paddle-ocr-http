@@ -6,15 +6,6 @@ services:
     environment:
       - HOST=0.0.0.0
       - PORT=5000
-      - USE_GPU=true  # Enable GPU support
     restart: unless-stopped
     tty: true
-    # Enable GPU support
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
     shm_size: 8G  # Increased shared memory as per PaddlePaddle recommendation
