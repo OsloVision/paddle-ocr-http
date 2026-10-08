@@ -15,7 +15,8 @@ RUN pip3 install --ignore-installed \
     paddleocr==3.2 \
     Pillow==10.0.0 \
     numpy==1.24.3 \
-    opencv-python-headless==4.8.1.78 
+    opencv-python-headless==4.8.1.78 \
+    PyMuPDF==1.24.10
 
 # Set working directory
 WORKDIR /app

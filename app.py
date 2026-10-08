@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 import logging
 from logging.config import dictConfig
 import uvicorn
+import fitz
 
 # Set up initial logging configuration
 log_config = {
@@ -132,6 +133,78 @@ def process_image(image_path):
             'error': str(e)
         }
 
+def combine_ocr_results(results):
+    """
+    Combine multiple OCR result dictionaries into the same response shape as /ocr.
+    """
+    all_texts = []
+    all_scores = []
+    all_details = []
+
+    for result in results:
+        if not result.get('success'):
+            return result
+
+        all_texts.extend(result.get('rec_texts', []))
+        all_scores.extend(result.get('rec_scores', []))
+        all_details.extend(result.get('details', []))
+
+    return {
+        'success': True,
+        'text': ' '.join(all_texts),
+        'confidence': float(sum(all_scores) / len(all_scores)) if all_scores else 0.0,
+        'rec_texts': all_texts,
+        'rec_scores': [float(score) for score in all_scores],
+        'details': all_details
+    }
+
+def process_pdf(contents):
+    """
+    Render each PDF page to an image with PyMuPDF and process it with the same OCR
+    flow used by /ocr.
+    """
+    page_image_paths = []
+
+    try:
+        pdf_document = fitz.open(stream=contents, filetype="pdf")
+    except Exception as e:
+        logger.error(f"PDF open error: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Invalid PDF file: {str(e)}")
+
+    try:
+        if pdf_document.page_count == 0:
+            raise HTTPException(status_code=400, detail="PDF has no pages")
+
+        results = []
+        zoom = 2.0
+        matrix = fitz.Matrix(zoom, zoom)
+
+        for page_index in range(pdf_document.page_count):
+            page = pdf_document.load_page(page_index)
+            pixmap = page.get_pixmap(matrix=matrix, alpha=False)
+
+            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
+                temp_image_path = tmp_file.name
+
+            pixmap.save(temp_image_path)
+            page_image_paths.append(temp_image_path)
+
+            logger.info(f"Processing PDF page {page_index + 1}/{pdf_document.page_count}: {temp_image_path}")
+            result = process_image(temp_image_path)
+
+            if not result.get('success'):
+                return result
+
+            results.append(result)
+
+        return combine_ocr_results(results)
+    finally:
+        pdf_document.close()
+
+        for image_path in page_image_paths:
+            if os.path.exists(image_path):
+                os.unlink(image_path)
+
 @app.get('/health')
 async def health_check():
     """Health check endpoint"""
@@ -200,6 +273,38 @@ async def extract_text(image: UploadFile = File(...)):
             os.unlink(temp_file_path)
 
 
+@app.post('/ocr/pdf')
+async def extract_text_from_pdf(pdf: UploadFile = File(...)):
+    """
+    Extract text from an uploaded PDF by rendering each page to an image with
+    PyMuPDF, running the same PaddleOCR flow as /ocr, and concatenating results.
+
+    Args:
+        pdf: Uploaded PDF file
+
+    Returns:
+        JSON response with the same format as /ocr
+    """
+    logger.info("Received PDF OCR request")
+
+    try:
+        if not pdf.filename:
+            raise HTTPException(status_code=400, detail="No file selected")
+
+        if not pdf.filename.lower().endswith('.pdf'):
+            raise HTTPException(status_code=400, detail='Unsupported file type. Use PDF')
+
+        contents = await pdf.read()
+        if len(contents) > 20 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="File too large. Maximum size is 20MB.")
+
+        return process_pdf(contents)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected PDF OCR error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
 
 
 

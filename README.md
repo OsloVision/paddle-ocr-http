@@ -9,6 +9,7 @@ This operates currently only in CPU mode, but can be configured for GPU use, ple
 - Fast REST API for OCR text extraction built with FastAPI
 - Automatic interactive API documentation (Swagger UI)
 - Supports multiple image formats (PNG, JPG, JPEG, BMP, TIFF, WEBP)
+- Supports PDF uploads by rendering pages with PyMuPDF and running OCR on each page
 - File upload via multipart/form-data
 - Optimized for small to medium images (up to 20MB)
 - Returns text with confidence scores and bounding boxes
@@ -59,6 +60,11 @@ GET /health
 POST /ocr
 ```
 
+### PDF OCR Text Extraction
+```
+POST /ocr/pdf
+```
+
 ## Usage Examples
 
 ### 1. Upload image file (multipart/form-data)
@@ -67,7 +73,13 @@ POST /ocr
 curl -X POST -F "image=@numberplate.jpg" http://localhost:5000/ocr
 ```
 
-### 2. Python example
+### 2. Upload PDF file (multipart/form-data)
+
+```bash
+curl -X POST -F "pdf=@document.pdf" http://localhost:5000/ocr/pdf
+```
+
+### 3. Python example
 
 ```python
 import requests
@@ -151,6 +163,7 @@ The API is pre-configured for optimal text recognition:
 - **Processing Mode**: CPU-only
 - **Maximum File Size**: 20MB
 - **Supported Formats**: PNG, JPG, JPEG, BMP, TIFF, WEBP
+- **PDF Rendering**: Each PDF page is rendered to PNG with PyMuPDF, processed with PaddleOCR, and returned in the same response format as `/ocr`
 
 ## Docker Image Size Optimization
 
@@ -183,6 +196,7 @@ The API includes comprehensive error handling for:
 - File size limits exceeded - max 20MB (returns 413)
 - OCR processing errors (returns 500)
 - Missing image data (returns 400)
+- Invalid or empty PDF files (returns 400)
 
 ## Performance Notes
 
